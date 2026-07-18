@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ems-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ems
+      POSTGRES_PASSWORD: ems_secret
+      POSTGRES_DB: ems_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ems_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ems -d ems_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ems-api
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://ems:ems_secret@postgres:5432/ems_db?schema=public
+      JWT_ACCESS_SECRET: change-me-access-secret-min-32-chars!!
+      JWT_REFRESH_SECRET: change-me-refresh-secret-min-32-chars!
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      CORS_ORIGIN: http://localhost:3000
+      COOKIE_SECURE: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    profiles:
+      - full
+
+volumes:
+  ems_pg_data:

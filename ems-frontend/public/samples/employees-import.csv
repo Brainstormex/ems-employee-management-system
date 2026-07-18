@@ -1,0 +1,3 @@
+fullName,email,phone,department,designation,salary,joiningDate,status,role,reportingManagerCode,password
+Import Test One,import.one@ems.local,+15551234001,Engineering,Software Engineer,95000,2024-06-01,ACTIVE,EMPLOYEE,EMP-0001,ChangeMe@123
+Import Test Two,import.two@ems.local,+15551234002,Sales,Account Executive,88000,2024-07-15,ACTIVE,EMPLOYEE,,ChangeMe@123

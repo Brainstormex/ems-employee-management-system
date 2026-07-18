@@ -1,0 +1,17 @@
+# Build context exclusions for ems-backend Docker image
+node_modules
+dist
+coverage
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.git
+.gitignore
+README.md
+CONTRACT.md
+tests
+**/*.test.ts
+jest.config.js
+uploads
