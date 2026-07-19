@@ -7,7 +7,15 @@ const employeeInclude = {
   reportingManager: {
     select: { id: true, fullName: true, employeeCode: true, designation: true },
   },
-  user: { select: { id: true, role: true, isActive: true } },
+  user: {
+    select: {
+      id: true,
+      isActive: true,
+      role: {
+        select: { id: true, slug: true, name: true, isSystem: true },
+      },
+    },
+  },
   _count: { select: { directReports: { where: { deletedAt: null } } } },
 } satisfies Prisma.EmployeeInclude;
 
@@ -31,7 +39,15 @@ export function serializeEmployee(employee: EmployeeWithRelations) {
     profileImageUrl: employee.profileImageUrl,
     reportingManagerId: employee.reportingManagerId,
     reportingManager: employee.reportingManager,
-    role: employee.user?.role ?? null,
+    role: employee.user?.role
+      ? {
+          id: employee.user.role.id,
+          slug: employee.user.role.slug,
+          name: employee.user.role.name,
+          isSystem: employee.user.role.isSystem,
+        }
+      : null,
+    roleId: employee.user?.role?.id ?? null,
     userId: employee.user?.id ?? null,
     isUserActive: employee.user?.isActive ?? null,
     directReportCount: employee._count.directReports,

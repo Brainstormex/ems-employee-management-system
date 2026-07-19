@@ -8,9 +8,10 @@ import employeeRoutes from "./routes/employee.routes";
 import departmentRoutes from "./routes/department.routes";
 import organizationRoutes from "./routes/organization.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
+import adminRoutes from "./routes/admin.routes";
 import { errorHandler } from "./middleware/error";
-import { requireAuth, requireRole } from "./middleware/auth";
-import { Role } from "./types";
+import { requireAuth, requirePermission } from "./middleware/auth";
+import { PERMISSIONS } from "./lib/permissions";
 
 export function createApp(): Express {
   const app = express();
@@ -21,7 +22,6 @@ export function createApp(): Express {
     .filter(Boolean);
 
   app.use(helmet());
-  // Render / reverse proxies terminate TLS; needed for secure cookies + rate-limit IP
   if (process.env.NODE_ENV === "production") {
     app.set("trust proxy", 1);
   }
@@ -46,14 +46,12 @@ export function createApp(): Express {
       res.json({
         status: "ok",
         service: "ems-backend",
-        phase: 6,
         database: "connected",
       });
     } catch {
       res.status(503).json({
         status: "error",
         service: "ems-backend",
-        phase: 6,
         database: "disconnected",
       });
     }
@@ -61,7 +59,7 @@ export function createApp(): Express {
 
   app.get("/", (_req, res) => {
     res.json({
-      message: "EMS API — Phase 6 (production-ready backend)",
+      message: "EMS API",
       endpoints: {
         auth: [
           "POST /api/auth/login",
@@ -72,6 +70,7 @@ export function createApp(): Express {
         employees: [
           "GET /api/employees",
           "POST /api/employees",
+          "POST /api/employees/import",
           "GET /api/employees/:id",
           "PUT /api/employees/:id",
           "DELETE /api/employees/:id",
@@ -80,8 +79,17 @@ export function createApp(): Express {
           "PATCH /api/employees/:id/manager",
         ],
         organization: ["GET /api/organization/tree"],
-        departments: ["GET /api/departments", "GET /api/departments/:id"],
+        departments: ["GET /api/departments"],
         dashboard: ["GET /api/dashboard/stats"],
+        admin: [
+          "GET /api/admin/users",
+          "PATCH /api/admin/users/:id",
+          "GET /api/admin/roles",
+          "POST /api/admin/roles",
+          "PUT /api/admin/roles/:id",
+          "DELETE /api/admin/roles/:id",
+          "GET /api/admin/permissions",
+        ],
       },
     });
   });
@@ -91,13 +99,13 @@ export function createApp(): Express {
   app.use("/api/departments", departmentRoutes);
   app.use("/api/organization", organizationRoutes);
   app.use("/api/dashboard", dashboardRoutes);
+  app.use("/api/admin", adminRoutes);
 
-  // Test-only RBAC probes
   if (process.env.NODE_ENV === "test") {
     app.get(
       "/rbac/admin-only",
       requireAuth,
-      requireRole(Role.SUPER_ADMIN),
+      requirePermission(PERMISSIONS.USERS_MANAGE),
       (_req, res) => {
         res.json({ ok: true, gate: "admin" });
       }
@@ -105,13 +113,17 @@ export function createApp(): Express {
     app.get(
       "/rbac/hr-or-admin",
       requireAuth,
-      requireRole(Role.SUPER_ADMIN, Role.HR_MANAGER),
+      requirePermission(PERMISSIONS.EMPLOYEES_CREATE),
       (_req, res) => {
         res.json({ ok: true, gate: "hr-or-admin" });
       }
     );
     app.get("/rbac/any-auth", requireAuth, (req, res) => {
-      res.json({ ok: true, role: req.user?.role });
+      res.json({
+        ok: true,
+        role: req.user?.role.slug,
+        permissions: req.user?.permissions,
+      });
     });
   }
 

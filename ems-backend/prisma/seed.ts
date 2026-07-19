@@ -1,5 +1,10 @@
 import bcrypt from "bcryptjs";
-import { PrismaClient, Role, Status } from "@prisma/client";
+import { PrismaClient, Status } from "@prisma/client";
+import {
+  PERMISSION_CATALOG,
+  SYSTEM_ROLE_PERMISSIONS,
+  SYSTEM_ROLE_SLUGS,
+} from "../src/lib/permissions";
 
 const prisma = new PrismaClient();
 const BCRYPT_ROUNDS = 10;
@@ -8,14 +13,94 @@ async function hash(password: string) {
   return bcrypt.hash(password, BCRYPT_ROUNDS);
 }
 
+async function seedRolesAndPermissions() {
+  for (const perm of PERMISSION_CATALOG) {
+    await prisma.permission.upsert({
+      where: { key: perm.key },
+      update: {
+        name: perm.name,
+        description: perm.description,
+        groupName: perm.group,
+      },
+      create: {
+        key: perm.key,
+        name: perm.name,
+        description: perm.description,
+        groupName: perm.group,
+      },
+    });
+  }
+
+  const allPerms = await prisma.permission.findMany();
+  const permByKey = new Map(allPerms.map((p) => [p.key, p.id]));
+
+  const systemRoles: {
+    slug: string;
+    name: string;
+    description: string;
+  }[] = [
+    {
+      slug: SYSTEM_ROLE_SLUGS.SUPER_ADMIN,
+      name: "Super Admin",
+      description: "Full system access",
+    },
+    {
+      slug: SYSTEM_ROLE_SLUGS.HR_MANAGER,
+      name: "HR Manager",
+      description: "Manage employees without destructive admin controls",
+    },
+    {
+      slug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
+      name: "Employee",
+      description: "Self-service employee access",
+    },
+  ];
+
+  const rolesBySlug = new Map<string, string>();
+
+  for (const roleDef of systemRoles) {
+    const role = await prisma.accessRole.upsert({
+      where: { slug: roleDef.slug },
+      update: {
+        name: roleDef.name,
+        description: roleDef.description,
+        isSystem: true,
+      },
+      create: {
+        slug: roleDef.slug,
+        name: roleDef.name,
+        description: roleDef.description,
+        isSystem: true,
+      },
+    });
+    rolesBySlug.set(role.slug, role.id);
+
+    await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
+    const keys =
+      SYSTEM_ROLE_PERMISSIONS[roleDef.slug as keyof typeof SYSTEM_ROLE_PERMISSIONS];
+    await prisma.rolePermission.createMany({
+      data: keys.map((key) => ({
+        roleId: role.id,
+        permissionId: permByKey.get(key)!,
+      })),
+    });
+  }
+
+  return rolesBySlug;
+}
+
 async function main() {
   console.log("Seeding database...");
 
-  // Clean existing data (order matters for FKs)
   await prisma.refreshToken.deleteMany();
   await prisma.user.deleteMany();
   await prisma.employee.deleteMany();
   await prisma.department.deleteMany();
+  // Keep permissions/roles; re-sync them
+  await prisma.rolePermission.deleteMany();
+  await prisma.accessRole.deleteMany({ where: { isSystem: false } });
+  // System roles kept and updated below; recreate if missing
+  const rolesBySlug = await seedRolesAndPermissions();
 
   const departments = await Promise.all([
     prisma.department.create({
@@ -56,24 +141,10 @@ async function main() {
     salary: number;
     joiningDate: string;
     status?: Status;
-    role: Role;
+    roleSlug: string;
     password: string;
     managerCode?: string;
   };
-
-  // Hierarchy (2–3 levels):
-  //   Ava Chen (CEO / Super Admin)
-  //   ├── Priya Sharma (HR Director)
-  //   │   └── Marcus Webb (HR Manager)
-  //   ├── Jordan Lee (VP Engineering)
-  //   │   ├── Sam Patel (Eng Manager)
-  //   │   │   ├── ...engineers
-  //   │   └── Riley Kim (Eng Manager)
-  //   │       └── ...engineers
-  //   ├── Taylor Brooks (VP Sales)
-  //   │   └── ...sales
-  //   └── Casey Nguyen (CFO)
-  //       └── ...finance
 
   const seeds: EmpSeed[] = [
     {
@@ -85,7 +156,7 @@ async function main() {
       designation: "Chief Executive Officer",
       salary: 250000,
       joiningDate: "2018-01-15",
-      role: Role.SUPER_ADMIN,
+      roleSlug: SYSTEM_ROLE_SLUGS.SUPER_ADMIN,
       password: "Admin@12345",
     },
     {
@@ -97,7 +168,7 @@ async function main() {
       designation: "HR Director",
       salary: 140000,
       joiningDate: "2019-03-01",
-      role: Role.HR_MANAGER,
+      roleSlug: SYSTEM_ROLE_SLUGS.HR_MANAGER,
       password: "Hr@12345678",
       managerCode: "EMP-0001",
     },
@@ -110,7 +181,7 @@ async function main() {
       designation: "HR Manager",
       salary: 95000,
       joiningDate: "2020-06-15",
-      role: Role.HR_MANAGER,
+      roleSlug: SYSTEM_ROLE_SLUGS.HR_MANAGER,
       password: "Hr@12345678",
       managerCode: "EMP-0002",
     },
@@ -123,7 +194,7 @@ async function main() {
       designation: "VP of Engineering",
       salary: 180000,
       joiningDate: "2018-06-01",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0001",
     },
@@ -136,7 +207,7 @@ async function main() {
       designation: "Engineering Manager",
       salary: 145000,
       joiningDate: "2019-09-10",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0004",
     },
@@ -149,7 +220,7 @@ async function main() {
       designation: "Engineering Manager",
       salary: 142000,
       joiningDate: "2020-02-20",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0004",
     },
@@ -162,7 +233,7 @@ async function main() {
       designation: "Senior Software Engineer",
       salary: 125000,
       joiningDate: "2021-01-11",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0005",
     },
@@ -175,7 +246,7 @@ async function main() {
       designation: "Software Engineer",
       salary: 98000,
       joiningDate: "2022-04-04",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0005",
     },
@@ -188,7 +259,7 @@ async function main() {
       designation: "Software Engineer",
       salary: 95000,
       joiningDate: "2023-02-14",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0006",
     },
@@ -201,7 +272,7 @@ async function main() {
       designation: "VP of Sales",
       salary: 165000,
       joiningDate: "2019-01-07",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0001",
     },
@@ -214,7 +285,7 @@ async function main() {
       designation: "Account Executive",
       salary: 88000,
       joiningDate: "2021-08-23",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0010",
     },
@@ -227,7 +298,7 @@ async function main() {
       designation: "Sales Development Rep",
       salary: 62000,
       joiningDate: "2023-05-01",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0010",
     },
@@ -240,7 +311,7 @@ async function main() {
       designation: "Chief Financial Officer",
       salary: 190000,
       joiningDate: "2018-11-12",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0001",
     },
@@ -253,7 +324,7 @@ async function main() {
       designation: "Senior Accountant",
       salary: 85000,
       joiningDate: "2020-10-05",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0013",
     },
@@ -267,7 +338,7 @@ async function main() {
       salary: 72000,
       joiningDate: "2022-09-19",
       status: Status.INACTIVE,
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0013",
     },
@@ -280,7 +351,7 @@ async function main() {
       designation: "DevOps Engineer",
       salary: 115000,
       joiningDate: "2021-11-30",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0006",
     },
@@ -293,7 +364,7 @@ async function main() {
       designation: "People Operations Specialist",
       salary: 68000,
       joiningDate: "2022-07-18",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0003",
     },
@@ -306,16 +377,18 @@ async function main() {
       designation: "Customer Success Manager",
       salary: 78000,
       joiningDate: "2023-11-06",
-      role: Role.EMPLOYEE,
+      roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
       password: "Employee@123",
       managerCode: "EMP-0010",
     },
   ];
 
-  // Create employees first (without managers), then wire hierarchy
   const createdByCode = new Map<string, string>();
 
   for (const seed of seeds) {
+    const roleId = rolesBySlug.get(seed.roleSlug);
+    if (!roleId) throw new Error(`Missing role ${seed.roleSlug}`);
+
     const employee = await prisma.employee.create({
       data: {
         employeeCode: seed.code,
@@ -336,14 +409,13 @@ async function main() {
       data: {
         email: seed.email,
         passwordHash: await hash(seed.password),
-        role: seed.role,
+        roleId,
         employeeId: employee.id,
         isActive: true,
       },
     });
   }
 
-  // Assign reporting managers (second pass avoids FK order issues)
   for (const seed of seeds) {
     if (!seed.managerCode) continue;
     const employeeId = createdByCode.get(seed.code);

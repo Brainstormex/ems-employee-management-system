@@ -2,14 +2,24 @@
 
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import {
   createEmployeeSchema,
   CreateEmployeeFormValues,
   toCreatePayload,
   toUpdatePayload,
+  UpdateEmployeeFormValues,
 } from "@/schemas/employee.schema";
-import { Role, Status, EmployeePublic, DepartmentPublic, roleLabel } from "@/types";
+import {
+  Status,
+  EmployeePublic,
+  DepartmentPublic,
+  PERMISSIONS,
+  SYSTEM_ROLE_SLUGS,
+} from "@/types";
+import { useAuth } from "@/components/providers/auth-provider";
+import { listRoles } from "@/lib/admin-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,7 +30,6 @@ type Props = {
   mode: "create" | "edit";
   departments: DepartmentPublic[];
   managers: EmployeePublic[];
-  currentRole: Role;
   initial?: EmployeePublic;
   onSubmitCreate?: (payload: Record<string, unknown>) => Promise<void>;
   onSubmitUpdate?: (payload: Record<string, unknown>) => Promise<void>;
@@ -34,16 +43,20 @@ export function EmployeeForm({
   mode,
   departments,
   managers,
-  currentRole,
   initial,
   onSubmitCreate,
   onSubmitUpdate,
   onCancel,
 }: Props) {
   const isCreate = mode === "create";
-  const canAssignSuperAdmin = currentRole === Role.SUPER_ADMIN;
-  const canEditRole =
-    currentRole === Role.SUPER_ADMIN || currentRole === Role.HR_MANAGER;
+  const { hasPermission } = useAuth();
+  const canAssignPrivileged = hasPermission(PERMISSIONS.USERS_MANAGE);
+
+  const rolesQuery = useQuery({
+    queryKey: ["admin", "roles"],
+    queryFn: listRoles,
+    enabled: isCreate,
+  });
 
   const {
     register,
@@ -63,7 +76,7 @@ export function EmployeeForm({
         initial?.joiningDate?.slice(0, 10) ??
         new Date().toISOString().slice(0, 10),
       status: initial?.status ?? Status.ACTIVE,
-      role: (initial?.role as Role) ?? Role.EMPLOYEE,
+      roleId: "",
       reportingManagerId: initial?.reportingManagerId ?? "",
       profileImageUrl: initial?.profileImageUrl ?? "",
       password: "",
@@ -72,17 +85,22 @@ export function EmployeeForm({
 
   const onSubmit = handleSubmit(async (values) => {
     try {
-      if (!canAssignSuperAdmin && values.role === Role.SUPER_ADMIN) {
-        setError("role", {
-          message: "Only Super Admins can assign the SUPER_ADMIN role",
-        });
-        return;
-      }
-
       if (isCreate) {
         await onSubmitCreate?.(toCreatePayload(values));
       } else {
-        await onSubmitUpdate?.(toUpdatePayload(values));
+        const updateValues: UpdateEmployeeFormValues = {
+          fullName: values.fullName,
+          email: values.email,
+          phone: values.phone,
+          departmentId: values.departmentId,
+          designation: values.designation,
+          salary: values.salary,
+          joiningDate: values.joiningDate,
+          status: values.status,
+          reportingManagerId: values.reportingManagerId,
+          profileImageUrl: values.profileImageUrl,
+        };
+        await onSubmitUpdate?.(toUpdatePayload(updateValues));
       }
     } catch (err) {
       if (
@@ -97,11 +115,19 @@ export function EmployeeForm({
     }
   });
 
-  const roleOptions = [
-    Role.EMPLOYEE,
-    Role.HR_MANAGER,
-    ...(canAssignSuperAdmin ? [Role.SUPER_ADMIN] : []),
-  ];
+  const roleOptions = (rolesQuery.data?.data ?? []).filter((role) => {
+    if (role.slug === SYSTEM_ROLE_SLUGS.SUPER_ADMIN && !canAssignPrivileged) {
+      return false;
+    }
+    if (
+      !canAssignPrivileged &&
+      (role.permissionKeys.includes(PERMISSIONS.USERS_MANAGE) ||
+        role.permissionKeys.includes(PERMISSIONS.ROLES_MANAGE))
+    ) {
+      return false;
+    }
+    return true;
+  });
 
   const managerOptions = managers.filter((m) => m.id !== initial?.id);
 
@@ -161,12 +187,17 @@ export function EmployeeForm({
             <option value={Status.INACTIVE}>Inactive</option>
           </select>
         </Field>
-        {canEditRole && (
-          <Field label="Role" error={errors.role?.message}>
-            <select className={selectClass} {...register("role")}>
+        {isCreate && (
+          <Field label="Role" error={errors.roleId?.message}>
+            <select
+              className={selectClass}
+              {...register("roleId")}
+              disabled={rolesQuery.isLoading}
+            >
+              <option value="">Default (Employee)</option>
               {roleOptions.map((r) => (
-                <option key={r} value={r}>
-                  {roleLabel(r)}
+                <option key={r.id} value={r.id}>
+                  {r.name}
                 </option>
               ))}
             </select>

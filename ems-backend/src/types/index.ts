@@ -1,19 +1,22 @@
-export enum Role {
-  SUPER_ADMIN = "SUPER_ADMIN",
-  HR_MANAGER = "HR_MANAGER",
-  EMPLOYEE = "EMPLOYEE",
-}
-
 export enum Status {
   ACTIVE = "ACTIVE",
   INACTIVE = "INACTIVE",
 }
 
+export interface RoleSummary {
+  id: string;
+  slug: string;
+  name: string;
+  isSystem: boolean;
+}
+
 export interface AuthUser {
   id: string;
-  role: Role;
-  employeeId: string | null;
   email: string;
+  employeeId: string | null;
+  role: RoleSummary;
+  permissions: string[];
+  isActive: boolean;
 }
 
 export interface EmployeePublic {

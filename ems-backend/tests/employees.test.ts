@@ -1,42 +1,15 @@
 import request from "supertest";
 import { createApp } from "../src/app";
 import { prisma } from "../src/lib/prisma";
-import { Role, Status } from "../src/types";
-
-const ADMIN = { email: "admin@ems.local", password: "Admin@12345" };
-const HR = { email: "hr1@ems.local", password: "Hr@12345678" };
-const EMPLOYEE = { email: "alex.rivera@ems.local", password: "Employee@123" };
-
-function getCookies(res: request.Response): string[] {
-  const raw = res.headers["set-cookie"];
-  if (!raw) return [];
-  return Array.isArray(raw) ? raw : [raw];
-}
-
-function cookieHeader(cookies: string[]): string {
-  return cookies.map((c) => c.split(";")[0]).join("; ");
-}
-
-async function loginAs(
-  app: ReturnType<typeof createApp>,
-  creds: { email: string; password: string }
-) {
-  const res = await request(app).post("/api/auth/login").send(creds);
-  expect(res.status).toBe(200);
-  return {
-    cookies: cookieHeader(getCookies(res)),
-    user: res.body.user as {
-      id: string;
-      employeeId: string;
-      role: Role;
-      email: string;
-    },
-  };
-}
+import { Status } from "../src/types";
+import { SYSTEM_ROLE_SLUGS } from "../src/lib/permissions";
+import { ADMIN, HR, EMPLOYEE, loginAs } from "./helpers";
 
 describe("Employee CRUD API", () => {
   const app = createApp();
   let engineeringId: string;
+  let employeeRoleId: string;
+  let superAdminRoleId: string;
   let createdEmployeeId: string | null = null;
 
   beforeAll(async () => {
@@ -45,6 +18,16 @@ describe("Employee CRUD API", () => {
     });
     if (!eng) throw new Error("Seed departments missing — run npm run db:seed");
     engineeringId = eng.id;
+
+    const employeeRole = await prisma.accessRole.findUnique({
+      where: { slug: SYSTEM_ROLE_SLUGS.EMPLOYEE },
+    });
+    const adminRole = await prisma.accessRole.findUnique({
+      where: { slug: SYSTEM_ROLE_SLUGS.SUPER_ADMIN },
+    });
+    if (!employeeRole || !adminRole) throw new Error("System roles missing");
+    employeeRoleId = employeeRole.id;
+    superAdminRoleId = adminRole.id;
   });
 
   afterAll(async () => {
@@ -147,14 +130,14 @@ describe("Employee CRUD API", () => {
           salary: 75000.5,
           joiningDate: "2024-06-01",
           status: Status.ACTIVE,
-          role: Role.EMPLOYEE,
+          roleId: employeeRoleId,
           password: "TestPass@123",
         });
 
       expect(res.status).toBe(201);
       expect(res.body.data.email).toBe(unique);
       expect(res.body.data.employeeCode).toMatch(/^EMP-\d{4}$/);
-      expect(res.body.data.role).toBe(Role.EMPLOYEE);
+      expect(res.body.data.role.slug).toBe(SYSTEM_ROLE_SLUGS.EMPLOYEE);
       createdEmployeeId = res.body.data.id;
     });
 
@@ -171,7 +154,7 @@ describe("Employee CRUD API", () => {
           designation: "Hacker",
           salary: 100000,
           joiningDate: "2024-01-01",
-          role: Role.SUPER_ADMIN,
+          roleId: superAdminRoleId,
         });
 
       expect(res.status).toBe(403);
@@ -293,7 +276,7 @@ describe("Employee CRUD API", () => {
           designation: "Temp Mgr",
           salary: 90000,
           joiningDate: "2023-01-01",
-          role: Role.EMPLOYEE,
+          roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
         });
       expect(mgr.status).toBe(201);
       const managerId = mgr.body.data.id as string;
@@ -309,7 +292,7 @@ describe("Employee CRUD API", () => {
           designation: "Temp Report",
           salary: 60000,
           joiningDate: "2023-06-01",
-          role: Role.EMPLOYEE,
+          roleSlug: SYSTEM_ROLE_SLUGS.EMPLOYEE,
           reportingManagerId: managerId,
         });
       expect(report.status).toBe(201);

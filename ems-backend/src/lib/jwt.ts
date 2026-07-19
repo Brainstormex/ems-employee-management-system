@@ -1,11 +1,11 @@
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import { Role } from "../types";
 
 export interface AccessTokenPayload {
   sub: string;
   email: string;
-  role: Role;
+  roleId: string;
+  roleSlug: string;
   employeeId: string | null;
   type: "access";
 }

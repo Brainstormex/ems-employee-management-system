@@ -13,10 +13,11 @@ import {
 } from "lucide-react";
 import { listEmployees, EmployeeListParams } from "@/lib/employees-api";
 import { listDepartments } from "@/lib/departments-api";
+import { listRoles } from "@/lib/admin-api";
 import { useAuth } from "@/components/providers/auth-provider";
 import {
-  Role,
   Status,
+  PERMISSIONS,
   canManageEmployees,
   roleLabel,
 } from "@/types";
@@ -38,11 +39,11 @@ const selectClass =
   "flex h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 export function EmployeesList() {
-  const { user } = useAuth();
+  const { user, hasPermission, hasAnyPermission } = useAuth();
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [department, setDepartment] = useState("");
-  const [role, setRole] = useState<Role | "">("");
+  const [roleId, setRoleId] = useState("");
   const [status, setStatus] = useState<Status | "">("");
   const [sortBy, setSortBy] = useState<"fullName" | "joiningDate">("fullName");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
@@ -61,14 +62,14 @@ export function EmployeesList() {
     () => ({
       search: search || undefined,
       department: department || undefined,
-      role: role || undefined,
+      roleId: roleId || undefined,
       status: status || undefined,
       sortBy,
       sortOrder,
       page,
       limit,
     }),
-    [search, department, role, status, sortBy, sortOrder, page]
+    [search, department, roleId, status, sortBy, sortOrder, page]
   );
 
   const departmentsQuery = useQuery({
@@ -76,14 +77,29 @@ export function EmployeesList() {
     queryFn: listDepartments,
   });
 
+  const canLoadRoles = hasAnyPermission(
+    PERMISSIONS.USERS_MANAGE,
+    PERMISSIONS.ROLES_MANAGE,
+    PERMISSIONS.EMPLOYEES_CREATE
+  );
+
+  const rolesQuery = useQuery({
+    queryKey: ["admin", "roles"],
+    queryFn: listRoles,
+    enabled: canLoadRoles,
+    retry: false,
+  });
+
   const employeesQuery = useQuery({
     queryKey: ["employees", params],
     queryFn: () => listEmployees(params),
   });
 
-  const canManage = user ? canManageEmployees(user.role) : false;
+  const canCreate = user ? canManageEmployees(user) : false;
+  const canImport = hasPermission(PERMISSIONS.EMPLOYEES_IMPORT);
   const data = employeesQuery.data?.data ?? [];
   const meta = employeesQuery.data?.meta;
+  const roleOptions = rolesQuery.data?.data ?? [];
 
   function toggleSort(column: "fullName" | "joiningDate") {
     if (sortBy === column) {
@@ -104,21 +120,25 @@ export function EmployeesList() {
             Search, filter, and manage people records.
           </p>
         </div>
-        {canManage && (
+        {(canCreate || canImport) && (
           <div className="flex flex-wrap gap-2">
-            <Link
-              href="/employees/import"
-              className={cn(buttonVariants({ variant: "outline" }), "gap-1.5")}
-            >
-              Import CSV
-            </Link>
-            <Link
-              href="/employees/new"
-              className={cn(buttonVariants(), "gap-1.5")}
-            >
-              <Plus className="size-4" />
-              Add employee
-            </Link>
+            {canImport && (
+              <Link
+                href="/employees/import"
+                className={cn(buttonVariants({ variant: "outline" }), "gap-1.5")}
+              >
+                Import CSV
+              </Link>
+            )}
+            {canCreate && (
+              <Link
+                href="/employees/new"
+                className={cn(buttonVariants(), "gap-1.5")}
+              >
+                <Plus className="size-4" />
+                Add employee
+              </Link>
+            )}
           </div>
         )}
       </div>
@@ -150,16 +170,16 @@ export function EmployeesList() {
         </select>
         <select
           className={selectClass}
-          value={role}
+          value={roleId}
           onChange={(e) => {
-            setRole(e.target.value as Role | "");
+            setRoleId(e.target.value);
             setPage(1);
           }}
         >
           <option value="">All roles</option>
-          {Object.values(Role).map((r) => (
-            <option key={r} value={r}>
-              {roleLabel(r)}
+          {roleOptions.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}
             </option>
           ))}
         </select>
@@ -254,7 +274,7 @@ export function EmployeesList() {
                   {emp.department?.name ?? "—"}
                 </TableCell>
                 <TableCell className="hidden lg:table-cell">
-                  {emp.role ? roleLabel(emp.role) : "—"}
+                  {roleLabel(emp.role)}
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={emp.status} />

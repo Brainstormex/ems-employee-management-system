@@ -7,30 +7,62 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  SUPER_ADMIN
-  HR_MANAGER
-  EMPLOYEE
-}
-
 enum Status {
   ACTIVE
   INACTIVE
 }
 
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique
+  name        String
+  description String?
+  groupName   String           @map("group_name")
+  createdAt   DateTime         @default(now())
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model AccessRole {
+  id          String           @id @default(uuid()) @db.Uuid
+  slug        String           @unique
+  name        String           @unique
+  description String?
+  isSystem    Boolean          @default(false) @map("is_system")
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("access_roles")
+}
+
+model RolePermission {
+  roleId       String     @map("role_id") @db.Uuid
+  permissionId String     @map("permission_id") @db.Uuid
+  role         AccessRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
 model User {
-  id           String         @id @default(uuid()) @db.Uuid
-  email        String         @unique
-  passwordHash String
-  role         Role           @default(EMPLOYEE)
-  employeeId   String?        @unique @db.Uuid
-  employee     Employee?      @relation(fields: [employeeId], references: [id])
-  isActive     Boolean        @default(true)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  lastLoginAt  DateTime?
+  id            String         @id @default(uuid()) @db.Uuid
+  email         String         @unique
+  passwordHash  String
+  roleId        String         @map("role_id") @db.Uuid
+  role          AccessRole     @relation(fields: [roleId], references: [id])
+  employeeId    String?        @unique @db.Uuid
+  employee      Employee?      @relation(fields: [employeeId], references: [id])
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  lastLoginAt   DateTime?
   refreshTokens RefreshToken[]
 
+  @@index([roleId])
   @@map("users")
 }
 

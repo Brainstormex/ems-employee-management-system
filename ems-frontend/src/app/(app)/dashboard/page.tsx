@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/components/providers/auth-provider";
 import { DashboardCharts } from "@/components/dashboard/dashboard-charts";
 import { StatCards } from "@/components/dashboard/stat-cards";
-import { roleLabel, canManageEmployees } from "@/types";
+import { roleLabel, canManageEmployees, PERMISSIONS } from "@/types";
 import { getDashboardStats } from "@/lib/dashboard-api";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,7 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const statsQuery = useQuery({
     queryKey: ["dashboard", "stats"],
     queryFn: getDashboardStats,
@@ -90,12 +90,28 @@ export default function DashboardPage() {
           >
             My profile
           </Link>
-          {canManageEmployees(user.role) && (
+          {canManageEmployees(user) && (
             <Link
               href="/employees/new"
               className={cn(buttonVariants({ variant: "secondary" }))}
             >
               Add employee
+            </Link>
+          )}
+          {hasPermission(PERMISSIONS.USERS_MANAGE) && (
+            <Link
+              href="/admin/users"
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              Admin users
+            </Link>
+          )}
+          {hasPermission(PERMISSIONS.ROLES_MANAGE) && (
+            <Link
+              href="/admin/roles"
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              Admin roles
             </Link>
           )}
         </CardContent>

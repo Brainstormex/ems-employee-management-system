@@ -2,14 +2,13 @@ import { apiFetch } from "@/lib/api";
 import {
   EmployeePublic,
   PaginatedResponse,
-  Role,
   Status,
 } from "@/types";
 
 export type EmployeeListParams = {
   search?: string;
   department?: string;
-  role?: Role | "";
+  roleId?: string;
   status?: Status | "";
   sortBy?: "joiningDate" | "fullName";
   sortOrder?: "asc" | "desc";
@@ -24,7 +23,7 @@ export async function listEmployees(
   const qs = new URLSearchParams();
   if (params.search) qs.set("search", params.search);
   if (params.department) qs.set("department", params.department);
-  if (params.role) qs.set("role", params.role);
+  if (params.roleId) qs.set("roleId", params.roleId);
   if (params.status) qs.set("status", params.status);
   if (params.sortBy) qs.set("sortBy", params.sortBy);
   if (params.sortOrder) qs.set("sortOrder", params.sortOrder);
@@ -82,4 +81,3 @@ export async function importEmployeesCsv(
     body: form,
   });
 }
-

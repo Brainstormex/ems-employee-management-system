@@ -5,7 +5,8 @@ Full-stack employee management application with role-based access, employee reco
 ## Features
 
 - Secure JWT authentication using httpOnly cookies and refresh-token rotation
-- Role-based access for Super Admin, HR Manager, and Employee users
+- **Custom RBAC** — database roles with granular permissions; protected Super Admin / HR Manager / Employee defaults
+- Admin dashboards to assign roles, enable/disable accounts, and manage custom roles
 - Employee search, filtering, sorting, pagination, creation, editing, and soft deletion
 - Expandable organization hierarchy with direct-report views
 - Dashboard statistics and Recharts visualizations
@@ -92,6 +93,8 @@ These credentials are for local demonstration only and must be changed before a 
 | `/employees/import` | Import employees from CSV |
 | `/employees/[id]` | Employee profile and editing |
 | `/organization` | Reporting hierarchy and direct reports |
+| `/admin/users` | Assign roles and enable/disable accounts |
+| `/admin/roles` | Create and edit custom roles / permissions |
 | `/profile` | Current employee profile |
 
 ## Useful commands
@@ -140,3 +143,5 @@ Frontend and backend validation rules are maintained separately because the proj
 - Frontend: see [`ems-frontend/README.md`](ems-frontend/README.md) for environment configuration; complete Vercel deployment documentation is planned for Phase 11.
 
 For production, use strong JWT secrets, HTTPS, `COOKIE_SECURE=true`, the managed PostgreSQL connection string, and the exact deployed frontend origin in `CORS_ORIGIN`.
+
+**RBAC migration:** deploy the backend with migration `20260719150000_custom_rbac` applied (and reseed or backfill roles) **before** deploying the updated frontend.

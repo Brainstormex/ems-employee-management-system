@@ -1,9 +1,13 @@
 import { NextFunction, Request, Response } from "express";
-import { Role } from "../types";
 import { verifyAccessToken } from "../lib/jwt";
 import { ACCESS_COOKIE } from "../lib/cookies";
 import { AppError } from "./error";
 import { prisma } from "../lib/prisma";
+import { PermissionKey } from "../lib/permissions";
+import {
+  loadUserAuthContext,
+  userHasPermission,
+} from "../services/rbac.service";
 
 export async function requireAuth(
   req: Request,
@@ -23,43 +27,53 @@ export async function requireAuth(
       throw new AppError(401, "Invalid or expired access token");
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        employeeId: true,
-        isActive: true,
-      },
-    });
-
-    if (!user || !user.isActive) {
+    const ctx = await loadUserAuthContext(payload.sub);
+    if (!ctx || !ctx.isActive) {
       throw new AppError(401, "User account is inactive or not found");
     }
 
-    req.user = {
-      id: user.id,
-      email: user.email,
-      role: user.role as Role,
-      employeeId: user.employeeId,
-    };
+    req.user = ctx;
     next();
   } catch (err) {
     next(err);
   }
 }
 
-export function requireRole(...roles: Role[]) {
+export function requirePermission(...permissions: PermissionKey[]) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {
       next(new AppError(401, "Authentication required"));
       return;
     }
-    if (!roles.includes(req.user.role)) {
+    const ok = permissions.every((p) => userHasPermission(req.user!, p));
+    if (!ok) {
       next(new AppError(403, "Insufficient permissions"));
       return;
     }
     next();
   };
+}
+
+export function requireAnyPermission(...permissions: PermissionKey[]) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      next(new AppError(401, "Authentication required"));
+      return;
+    }
+    const ok = permissions.some((p) => userHasPermission(req.user!, p));
+    if (!ok) {
+      next(new AppError(403, "Insufficient permissions"));
+      return;
+    }
+    next();
+  };
+}
+
+/** @deprecated Prefer requirePermission — kept for transitional test probes */
+export async function assertActiveUser(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { isActive: true },
+  });
+  return Boolean(user?.isActive);
 }

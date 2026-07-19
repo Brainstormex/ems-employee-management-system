@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { Role, Status } from "../types";
+import { Status } from "../types";
+import { ALL_PERMISSION_KEYS } from "../lib/permissions";
 
 /**
  * Phone format: E.164 international format.
@@ -55,7 +56,10 @@ export const createEmployeeSchema = z.object({
   salary: salarySchema,
   joiningDate: joiningDateSchema,
   status: z.nativeEnum(Status).optional().default(Status.ACTIVE),
-  role: z.nativeEnum(Role).optional().default(Role.EMPLOYEE),
+  /** Access role UUID; defaults to Employee system role when omitted */
+  roleId: z.string().uuid("Invalid role ID").optional(),
+  /** Alternate: role slug (e.g. employee, hr-manager) — resolved server-side */
+  roleSlug: z.string().trim().min(1).optional(),
   reportingManagerId: z.string().uuid("Invalid manager ID").nullable().optional(),
   profileImageUrl: z.string().url("Invalid profile image URL").nullable().optional(),
   password: z
@@ -87,12 +91,11 @@ export const updateEmployeeSchema = z.object({
   salary: salarySchema.optional(),
   joiningDate: joiningDateSchema.optional(),
   status: z.nativeEnum(Status).optional(),
-  role: z.nativeEnum(Role).optional(),
   reportingManagerId: z.string().uuid("Invalid manager ID").nullable().optional(),
   profileImageUrl: z.string().url("Invalid profile image URL").nullable().optional(),
 });
 
-/** Fields an EMPLOYEE role may update on their own profile */
+/** Fields a self-service user may update on their own profile */
 export const employeeSelfUpdateSchema = z
   .object({
     phone: z
@@ -115,7 +118,7 @@ export const assignManagerSchema = z.object({
 export const employeeQuerySchema = z.object({
   search: z.string().optional(),
   department: z.string().uuid().optional(),
-  role: z.nativeEnum(Role).optional(),
+  roleId: z.string().uuid().optional(),
   status: z.nativeEnum(Status).optional(),
   sortBy: z.enum(["joiningDate", "fullName"]).optional().default("fullName"),
   sortOrder: z.enum(["asc", "desc"]).optional().default("asc"),
@@ -138,9 +141,55 @@ export const loginSchema = z.object({
     .min(1, "Password is required"),
 });
 
+export const updateUserAdminSchema = z.object({
+  roleId: z.string().uuid("Invalid role ID").optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const createRoleSchema = z.object({
+  name: z
+    .string({ required_error: "Name is required" })
+    .trim()
+    .min(2, "Name must be at least 2 characters")
+    .max(80, "Name must be at most 80 characters"),
+  description: z.string().trim().max(500).nullable().optional(),
+  permissionKeys: z
+    .array(z.enum(ALL_PERMISSION_KEYS as [string, ...string[]]))
+    .min(1, "Select at least one permission"),
+});
+
+export const updateRoleSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Name must be at least 2 characters")
+    .max(80, "Name must be at most 80 characters")
+    .optional(),
+  description: z.string().trim().max(500).nullable().optional(),
+  permissionKeys: z
+    .array(z.enum(ALL_PERMISSION_KEYS as [string, ...string[]]))
+    .min(1, "Select at least one permission")
+    .optional(),
+});
+
+export const adminUserQuerySchema = z.object({
+  search: z.string().optional(),
+  roleId: z.string().uuid().optional(),
+  isActive: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === "true")),
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+});
+
 export type CreateEmployeeInput = z.infer<typeof createEmployeeSchema>;
 export type UpdateEmployeeInput = z.infer<typeof updateEmployeeSchema>;
 export type EmployeeSelfUpdateInput = z.infer<typeof employeeSelfUpdateSchema>;
 export type AssignManagerInput = z.infer<typeof assignManagerSchema>;
 export type EmployeeQueryInput = z.infer<typeof employeeQuerySchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type UpdateUserAdminInput = z.infer<typeof updateUserAdminSchema>;
+export type CreateRoleInput = z.infer<typeof createRoleSchema>;
+export type UpdateRoleInput = z.infer<typeof updateRoleSchema>;
+export type AdminUserQueryInput = z.infer<typeof adminUserQuerySchema>;

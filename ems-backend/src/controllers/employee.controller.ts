@@ -2,7 +2,8 @@ import { Prisma } from "@prisma/client";
 import { Request, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/error";
-import { Role, Status } from "../types";
+import { Status } from "../types";
+import { PERMISSIONS } from "../lib/permissions";
 import {
   CreateEmployeeInput,
   EmployeeQueryInput,
@@ -20,6 +21,7 @@ import {
   createEmployeeRecord,
   importEmployeesFromCsv,
 } from "../services/employee-import.service";
+import { userHasPermission } from "../services/rbac.service";
 
 function requireUser(req: Request) {
   if (!req.user) throw new AppError(401, "Authentication required");
@@ -30,8 +32,9 @@ export async function listEmployees(req: Request, res: Response): Promise<void> 
   const user = requireUser(req);
   const query = req.query as unknown as EmployeeQueryInput;
 
-  // EMPLOYEE: only their own record
-  if (user.role === Role.EMPLOYEE) {
+  const canReadAll = userHasPermission(user, PERMISSIONS.EMPLOYEES_READ_ALL);
+
+  if (!canReadAll) {
     if (!user.employeeId) {
       res.json({ data: [], meta: { page: 1, limit: query.limit, total: 0, totalPages: 0 } });
       return;
@@ -49,13 +52,14 @@ export async function listEmployees(req: Request, res: Response): Promise<void> 
   }
 
   const includeDeleted =
-    query.includeDeleted === true && user.role === Role.SUPER_ADMIN;
+    query.includeDeleted === true &&
+    userHasPermission(user, PERMISSIONS.EMPLOYEES_RESTORE);
 
   const where: Prisma.EmployeeWhereInput = {
     ...(includeDeleted ? {} : { deletedAt: null }),
     ...(query.department ? { departmentId: query.department } : {}),
     ...(query.status ? { status: query.status } : {}),
-    ...(query.role ? { user: { role: query.role } } : {}),
+    ...(query.roleId ? { user: { roleId: query.roleId } } : {}),
     ...(query.search
       ? {
           OR: [
@@ -111,11 +115,15 @@ export async function getEmployee(req: Request, res: Response): Promise<void> {
     throw new AppError(404, "Employee not found");
   }
 
-  if (employee.deletedAt && user.role !== Role.SUPER_ADMIN) {
+  if (
+    employee.deletedAt &&
+    !userHasPermission(user, PERMISSIONS.EMPLOYEES_RESTORE)
+  ) {
     throw new AppError(404, "Employee not found");
   }
 
-  if (user.role === Role.EMPLOYEE && user.employeeId !== employee.id) {
+  const canReadAll = userHasPermission(user, PERMISSIONS.EMPLOYEES_READ_ALL);
+  if (!canReadAll && user.employeeId !== employee.id) {
     throw new AppError(403, "You can only view your own profile");
   }
 
@@ -125,7 +133,7 @@ export async function getEmployee(req: Request, res: Response): Promise<void> {
 export async function createEmployee(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
   const body = req.body as CreateEmployeeInput;
-  const employee = await createEmployeeRecord(body, user.role);
+  const employee = await createEmployeeRecord(body, user);
   res.status(201).json({ data: employee });
 }
 
@@ -137,7 +145,7 @@ export async function importEmployees(req: Request, res: Response): Promise<void
     throw new AppError(400, "CSV file is required (field name: file)");
   }
 
-  const result = await importEmployeesFromCsv(file.buffer, user.role);
+  const result = await importEmployeesFromCsv(file.buffer, user);
   res.status(200).json({ data: result });
 }
 
@@ -150,16 +158,24 @@ export async function updateEmployee(req: Request, res: Response): Promise<void>
     include: { user: true },
   });
 
-  if (!existing || (existing.deletedAt && user.role !== Role.SUPER_ADMIN)) {
+  if (
+    !existing ||
+    (existing.deletedAt && !userHasPermission(user, PERMISSIONS.EMPLOYEES_RESTORE))
+  ) {
     throw new AppError(404, "Employee not found");
   }
 
-  // --- EMPLOYEE: own profile, whitelist only ---
-  if (user.role === Role.EMPLOYEE) {
-    if (user.employeeId !== id) {
-      throw new AppError(403, "You can only edit your own profile");
-    }
+  const canUpdateAll = userHasPermission(user, PERMISSIONS.EMPLOYEES_UPDATE_ALL);
+  const canUpdateSelf =
+    userHasPermission(user, PERMISSIONS.EMPLOYEES_UPDATE_SELF) &&
+    user.employeeId === id;
 
+  if (!canUpdateAll && !canUpdateSelf) {
+    throw new AppError(403, "You do not have permission to update this employee");
+  }
+
+  // Self-only path (no update:all)
+  if (!canUpdateAll && canUpdateSelf) {
     const allowed = req.body as EmployeeSelfUpdateInput;
     const updated = await prisma.employee.update({
       where: { id },
@@ -176,27 +192,7 @@ export async function updateEmployee(req: Request, res: Response): Promise<void>
     return;
   }
 
-  // --- HR / SUPER_ADMIN ---
   const body = req.body as UpdateEmployeeInput;
-
-  // Reject disallowed fields that slipped through (defense in depth for EMPLOYEE already handled)
-  if (body.role === Role.SUPER_ADMIN && user.role !== Role.SUPER_ADMIN) {
-    throw new AppError(403, "Only Super Admins can assign the SUPER_ADMIN role", {
-      role: "Only Super Admins can assign the SUPER_ADMIN role",
-    });
-  }
-
-  // HR cannot change an existing SUPER_ADMIN's role
-  if (
-    user.role === Role.HR_MANAGER &&
-    existing.user?.role === Role.SUPER_ADMIN &&
-    body.role !== undefined &&
-    body.role !== Role.SUPER_ADMIN
-  ) {
-    throw new AppError(403, "HR Managers cannot change a Super Admin's role", {
-      role: "HR Managers cannot change a Super Admin's role",
-    });
-  }
 
   if (body.email && body.email !== existing.email) {
     await assertEmailAvailable(body.email, id);
@@ -207,6 +203,9 @@ export async function updateEmployee(req: Request, res: Response): Promise<void>
   }
 
   if (body.reportingManagerId !== undefined) {
+    if (!userHasPermission(user, PERMISSIONS.EMPLOYEES_ASSIGN_MANAGER)) {
+      throw new AppError(403, "Insufficient permissions to assign managers");
+    }
     await assertNoCircularReporting(id, body.reportingManagerId);
   }
 
@@ -235,25 +234,11 @@ export async function updateEmployee(req: Request, res: Response): Promise<void>
       },
     });
 
-    if (existing.user) {
-      const userUpdate: Prisma.UserUpdateInput = {};
-      if (body.email !== undefined) userUpdate.email = body.email;
-      if (body.role !== undefined && user.role === Role.SUPER_ADMIN) {
-        userUpdate.role = body.role;
-      } else if (
-        body.role !== undefined &&
-        user.role === Role.HR_MANAGER &&
-        body.role !== Role.SUPER_ADMIN
-      ) {
-        userUpdate.role = body.role;
-      }
-
-      if (Object.keys(userUpdate).length > 0) {
-        await tx.user.update({
-          where: { id: existing.user.id },
-          data: userUpdate,
-        });
-      }
+    if (existing.user && body.email !== undefined) {
+      await tx.user.update({
+        where: { id: existing.user.id },
+        data: { email: body.email },
+      });
     }
 
     return tx.employee.findUniqueOrThrow({
@@ -272,10 +257,6 @@ export async function softDeleteEmployee(
   const user = requireUser(req);
   const { id } = req.params;
 
-  if (user.role !== Role.SUPER_ADMIN) {
-    throw new AppError(403, "Only Super Admins can delete employees");
-  }
-
   const existing = await prisma.employee.findUnique({
     where: { id },
     include: { user: true },
@@ -290,7 +271,6 @@ export async function softDeleteEmployee(
   }
 
   await prisma.$transaction(async (tx) => {
-    // Unassign direct reports (do not silently orphan)
     await tx.employee.updateMany({
       where: { reportingManagerId: id, deletedAt: null },
       data: { reportingManagerId: null },
@@ -317,12 +297,7 @@ export async function softDeleteEmployee(
 }
 
 export async function restoreEmployee(req: Request, res: Response): Promise<void> {
-  const user = requireUser(req);
   const { id } = req.params;
-
-  if (user.role !== Role.SUPER_ADMIN) {
-    throw new AppError(403, "Only Super Admins can restore employees");
-  }
 
   const existing = await prisma.employee.findUnique({
     where: { id },

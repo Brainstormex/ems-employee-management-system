@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Role, Status } from "@/types";
+import { Status } from "@/types";
 
 /**
  * Mirrors ems-backend/src/schemas/employee.schema.ts
@@ -54,7 +54,9 @@ export const createEmployeeSchema = z.object({
   salary: salarySchema,
   joiningDate: joiningDateSchema,
   status: z.enum([Status.ACTIVE, Status.INACTIVE]),
-  role: z.enum([Role.SUPER_ADMIN, Role.HR_MANAGER, Role.EMPLOYEE]),
+  roleId: z
+    .union([z.string().uuid("Invalid role ID"), z.literal("")])
+    .optional(),
   reportingManagerId: z.string().optional(),
   profileImageUrl: z.string().optional(),
   password: z
@@ -87,7 +89,6 @@ export const updateEmployeeSchema = z.object({
   salary: salarySchema,
   joiningDate: joiningDateSchema,
   status: z.enum([Status.ACTIVE, Status.INACTIVE]),
-  role: z.enum([Role.SUPER_ADMIN, Role.HR_MANAGER, Role.EMPLOYEE]),
   reportingManagerId: z.string().optional(),
   profileImageUrl: z.string().optional(),
 });
@@ -115,6 +116,8 @@ export function toCreatePayload(values: CreateEmployeeFormValues) {
     throw new Error("Invalid profile image URL");
   }
 
+  const roleId = emptyToNull(values.roleId);
+
   return {
     fullName: values.fullName,
     email: values.email,
@@ -124,7 +127,7 @@ export function toCreatePayload(values: CreateEmployeeFormValues) {
     salary: values.salary,
     joiningDate: values.joiningDate,
     status: values.status,
-    role: values.role,
+    ...(roleId ? { roleId } : {}),
     reportingManagerId: emptyToNull(values.reportingManagerId),
     profileImageUrl,
     ...(values.password ? { password: values.password } : {}),
@@ -146,7 +149,6 @@ export function toUpdatePayload(values: UpdateEmployeeFormValues) {
     salary: values.salary,
     joiningDate: values.joiningDate,
     status: values.status,
-    role: values.role,
     reportingManagerId: emptyToNull(values.reportingManagerId),
     profileImageUrl,
   };

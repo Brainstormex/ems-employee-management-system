@@ -1,28 +1,7 @@
 import request from "supertest";
 import { createApp } from "../src/app";
 import { prisma } from "../src/lib/prisma";
-
-const ADMIN = { email: "admin@ems.local", password: "Admin@12345" };
-const EMPLOYEE = { email: "alex.rivera@ems.local", password: "Employee@123" };
-
-function getCookies(res: request.Response): string[] {
-  const raw = res.headers["set-cookie"];
-  if (!raw) return [];
-  return Array.isArray(raw) ? raw : [raw];
-}
-
-function cookieHeader(cookies: string[]): string {
-  return cookies.map((c) => c.split(";")[0]).join("; ");
-}
-
-async function loginAs(
-  app: ReturnType<typeof createApp>,
-  creds: { email: string; password: string }
-) {
-  const res = await request(app).post("/api/auth/login").send(creds);
-  expect(res.status).toBe(200);
-  return cookieHeader(getCookies(res));
-}
+import { ADMIN, EMPLOYEE, loginAs } from "./helpers";
 
 describe("GET /api/dashboard/stats", () => {
   const app = createApp();
@@ -32,7 +11,7 @@ describe("GET /api/dashboard/stats", () => {
   });
 
   it("returns aggregate card stats excluding soft-deleted", async () => {
-    const cookies = await loginAs(app, ADMIN);
+    const { cookies } = await loginAs(app, ADMIN);
     const res = await request(app)
       .get("/api/dashboard/stats")
       .set("Cookie", cookies);
@@ -63,7 +42,7 @@ describe("GET /api/dashboard/stats", () => {
   });
 
   it("includes chart series for department, status, and hires", async () => {
-    const cookies = await loginAs(app, ADMIN);
+    const { cookies } = await loginAs(app, ADMIN);
     const res = await request(app)
       .get("/api/dashboard/stats")
       .set("Cookie", cookies);
@@ -91,7 +70,7 @@ describe("GET /api/dashboard/stats", () => {
   });
 
   it("allows EMPLOYEE to read stats", async () => {
-    const cookies = await loginAs(app, EMPLOYEE);
+    const { cookies } = await loginAs(app, EMPLOYEE);
     const res = await request(app)
       .get("/api/dashboard/stats")
       .set("Cookie", cookies);

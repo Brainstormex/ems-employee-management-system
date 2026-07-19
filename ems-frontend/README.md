@@ -2,13 +2,13 @@
 
 Next.js (App Router) + TypeScript + Tailwind + shadcn/ui client for the Employee Management System.
 
-> **Phase 10 complete** — CSV employee import.
+> **Custom RBAC** — database roles, permission gates, `/admin/users` and `/admin/roles`.
 > Phase 11 adds full Vercel deployment docs.
 
 ## Prerequisites
 
 - Node.js 20+
-- Running backend at `http://localhost:4000` (see `../ems-backend`)
+- Running backend at `http://localhost:4000` (see `../ems-backend`) with migration `20260719150000_custom_rbac` applied
 
 ## Local setup
 
@@ -27,18 +27,16 @@ Open [http://localhost:3000](http://localhost:3000).
 | `API_PROXY_TARGET` | Backend origin for `/api` rewrites (server-only) |
 | `NEXT_PUBLIC_API_URL` | Leave empty (recommended). Same-origin `/api` keeps cookies on the Next host. |
 
-Set both in the Vercel dashboard for production. Example:
+## Admin (RBAC)
 
-```
-API_PROXY_TARGET=https://ems-api.onrender.com
-NEXT_PUBLIC_API_URL=
-```
-
-Backend `CORS_ORIGIN` should still include your Vercel URL if you ever call the API cross-origin; with rewrites, browser traffic stays same-origin.
+- `/admin/users` — change role, enable/disable login (`users:manage`)
+- `/admin/roles` — create/edit custom roles and permissions (`roles:manage`)
+- System roles (`super-admin`, `hr-manager`, `employee`) are protected
+- UI gates use permission keys from `/api/auth/me`
 
 ## Phase 10 features
 
-- `/employees/import` — CSV upload (HR / Super Admin); partial success with per-row errors
+- `/employees/import` — CSV upload; roles via `roleSlug`
 - Sample file at `/samples/employees-import.csv`
 
 ## Phase 9 features

@@ -1,7 +1,8 @@
 import { Request, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/error";
-import { Role, Status } from "../types";
+import { Status } from "../types";
+import { PERMISSIONS } from "../lib/permissions";
 import { AssignManagerInput } from "../schemas/employee.schema";
 import {
   assertNoCircularReporting,
@@ -9,6 +10,7 @@ import {
   serializeEmployee,
 } from "../services/employee.service";
 import { buildOrgTree } from "../services/organization.service";
+import { userHasPermission } from "../services/rbac.service";
 
 function requireUser(req: Request) {
   if (!req.user) throw new AppError(401, "Authentication required");
@@ -68,8 +70,8 @@ export async function getReportees(req: Request, res: Response): Promise<void> {
     throw new AppError(404, "Employee not found");
   }
 
-  // EMPLOYEE may only view their own direct reports ("My Team")
-  if (user.role === Role.EMPLOYEE && user.employeeId !== id) {
+  const canReadAll = userHasPermission(user, PERMISSIONS.EMPLOYEES_READ_ALL);
+  if (!canReadAll && user.employeeId !== id) {
     throw new AppError(403, "You can only view your own direct reports");
   }
 
@@ -91,13 +93,8 @@ export async function getReportees(req: Request, res: Response): Promise<void> {
 
 /** PATCH /api/employees/:id/manager */
 export async function assignManager(req: Request, res: Response): Promise<void> {
-  const user = requireUser(req);
   const { id } = req.params;
   const { reportingManagerId } = req.body as AssignManagerInput;
-
-  if (user.role === Role.EMPLOYEE) {
-    throw new AppError(403, "Employees cannot assign reporting managers");
-  }
 
   const employee = await prisma.employee.findFirst({
     where: { id, deletedAt: null },

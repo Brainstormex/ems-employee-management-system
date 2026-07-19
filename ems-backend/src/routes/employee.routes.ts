@@ -1,6 +1,6 @@
 import { NextFunction, Request, Response, Router } from "express";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requirePermission } from "../middleware/auth";
 import { asyncHandler, validate } from "../middleware/error";
 import { csvUpload } from "../middleware/upload";
 import {
@@ -12,7 +12,8 @@ import {
 } from "../schemas/employee.schema";
 import * as employeeController from "../controllers/employee.controller";
 import * as organizationController from "../controllers/organization.controller";
-import { Role } from "../types";
+import { PERMISSIONS } from "../lib/permissions";
+import { userHasPermission } from "../services/rbac.service";
 
 const router = Router();
 
@@ -20,13 +21,18 @@ const idParamSchema = z.object({
   id: z.string().uuid("Invalid employee ID"),
 });
 
-/** Pick update schema based on authenticated role */
+/** Pick update schema based on permissions */
 function validateEmployeeUpdate(
   req: Request,
   res: Response,
   next: NextFunction
 ): void {
-  if (req.user?.role === Role.EMPLOYEE) {
+  const user = req.user;
+  if (
+    user &&
+    !userHasPermission(user, PERMISSIONS.EMPLOYEES_UPDATE_ALL) &&
+    userHasPermission(user, PERMISSIONS.EMPLOYEES_UPDATE_SELF)
+  ) {
     validate(employeeSelfUpdateSchema)(req, res, next);
     return;
   }
@@ -43,19 +49,18 @@ router.get(
 
 router.post(
   "/",
-  requireRole(Role.SUPER_ADMIN, Role.HR_MANAGER),
+  requirePermission(PERMISSIONS.EMPLOYEES_CREATE),
   validate(createEmployeeSchema),
   asyncHandler(employeeController.createEmployee)
 );
 
 router.post(
   "/import",
-  requireRole(Role.SUPER_ADMIN, Role.HR_MANAGER),
+  requirePermission(PERMISSIONS.EMPLOYEES_IMPORT),
   csvUpload.single("file"),
   asyncHandler(employeeController.importEmployees)
 );
 
-// Hierarchy routes (more specific than /:id)
 router.get(
   "/:id/reportees",
   validate(idParamSchema, "params"),
@@ -64,7 +69,7 @@ router.get(
 
 router.patch(
   "/:id/manager",
-  requireRole(Role.SUPER_ADMIN, Role.HR_MANAGER),
+  requirePermission(PERMISSIONS.EMPLOYEES_ASSIGN_MANAGER),
   validate(idParamSchema, "params"),
   validate(assignManagerSchema),
   asyncHandler(organizationController.assignManager)
@@ -85,14 +90,14 @@ router.put(
 
 router.delete(
   "/:id",
-  requireRole(Role.SUPER_ADMIN),
+  requirePermission(PERMISSIONS.EMPLOYEES_DELETE),
   validate(idParamSchema, "params"),
   asyncHandler(employeeController.softDeleteEmployee)
 );
 
 router.post(
   "/:id/restore",
-  requireRole(Role.SUPER_ADMIN),
+  requirePermission(PERMISSIONS.EMPLOYEES_RESTORE),
   validate(idParamSchema, "params"),
   asyncHandler(employeeController.restoreEmployee)
 );

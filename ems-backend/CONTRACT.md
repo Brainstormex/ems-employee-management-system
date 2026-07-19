@@ -1,22 +1,50 @@
 # EMS API Contract
 
-Keep this file in sync when changing fields, enums, or validation rules.
-Mirror identical Zod rules in `ems-frontend/schemas` when that project exists.
+Keep this file in sync when changing fields, permissions, or validation rules.
+Mirror corresponding types/rules in `ems-frontend`.
 
-## Enums
+## Status enum
 
-### Role
-| Value | Description |
-|-------|-------------|
-| `SUPER_ADMIN` | Full access |
-| `HR_MANAGER` | Create/edit/view employees; cannot delete or assign SUPER_ADMIN |
-| `EMPLOYEE` | Own profile only (phone, profileImageUrl) |
-
-### Status
 | Value |
 |-------|
 | `ACTIVE` |
 | `INACTIVE` |
+
+## Roles & permissions (database-backed)
+
+Roles are rows in `access_roles` (one role per user via `users.role_id`).
+Permissions are rows in `permissions`; assigned through `role_permissions`.
+
+### System roles (immutable)
+
+| Slug | Name | Notes |
+|------|------|-------|
+| `super-admin` | Super Admin | All permissions; protected |
+| `hr-manager` | HR Manager | Employee management without delete/admin |
+| `employee` | Employee | Self-service only |
+
+Custom roles may be created/edited/deleted by users with `roles:manage`.
+System roles cannot be renamed, edited, or deleted.
+
+### Permission keys
+
+| Key | Description |
+|-----|-------------|
+| `employees:read:self` | View own employee profile |
+| `employees:read:all` | List/view all employees |
+| `employees:create` | Create employees |
+| `employees:update:self` | Edit own phone / profile image |
+| `employees:update:all` | Edit any employee |
+| `employees:delete` | Soft-delete employees |
+| `employees:restore` | Restore soft-deleted employees |
+| `employees:import` | CSV import |
+| `employees:assign_manager` | Change reporting manager |
+| `dashboard:read` | Dashboard stats |
+| `organization:read` | Org tree / reportees |
+| `users:manage` | Assign roles / enable-disable accounts |
+| `roles:manage` | CRUD custom roles |
+
+Authorization uses `requirePermission` / `requireAnyPermission`. Role changes take effect on the next authenticated request (live DB check).
 
 ## Employee fields
 
@@ -26,94 +54,98 @@ Mirror identical Zod rules in `ems-frontend/schemas` when that project exists.
 | employeeCode | string | Unique, e.g. `EMP-0001` |
 | fullName | string | Required, 2–100 chars |
 | email | string | Unique, valid email |
-| phone | string | E.164 (`+` + 7–15 digits) |
+| phone | string | E.164 |
 | departmentId | uuid | FK → Department |
 | designation | string | Required, 2–100 chars |
 | salary | number | Positive, max 10_000_000, ≤2 decimals |
 | joiningDate | ISO date | Required, not in the future |
-| status | Status | Default `ACTIVE` |
+| status | Status | Employee workforce status (≠ login `isActive`) |
 | profileImageUrl | string \| null | Valid URL |
-| reportingManagerId | uuid \| null | Self-FK; no cycles; not self |
+| reportingManagerId | uuid \| null | Self-FK; no cycles |
 | deletedAt | datetime \| null | Soft delete marker |
+| role | RoleSummary \| null | From linked user |
+| roleId | uuid \| null | Linked user's role |
+
+Create employee accepts `roleId` and/or `roleSlug` (defaults to `employee`).
+Update employee **does not** change role — use admin user APIs.
 
 ## User fields
 
 | Field | Type | Notes |
 |-------|------|-------|
 | id | uuid | PK |
-| email | string | Unique (matches employee email when linked) |
-| passwordHash | string | Never returned in API |
-| role | Role | |
+| email | string | Unique |
+| passwordHash | string | Never returned |
+| roleId | uuid | FK → AccessRole |
 | employeeId | uuid \| null | One-to-one → Employee |
-| isActive | boolean | |
+| isActive | boolean | Login enabled |
 | lastLoginAt | datetime \| null | |
 
-## Auth cookies
+## Auth responses
 
-| Cookie | Lifetime | Notes |
-|--------|----------|-------|
-| `accessToken` | 15 min | httpOnly, secure (prod), sameSite=lax |
-| `refreshToken` | 7 days | httpOnly, secure (prod), sameSite=lax |
-
-Tokens are **never** returned in JSON body.
-
-## Validation (must stay identical FE/BE)
-
-- Phone: `/^\+[1-9]\d{6,14}$/` (E.164)
-- Salary max: `10_000_000`
-- Salary min: `0.01`
-- Full name / designation: 2–100 chars
-- Joining date: not future
-- Password (create user): min 8 chars
-
-## Error shape (validation 400)
+Login / `/api/auth/me` return:
 
 ```json
 {
-  "errors": {
-    "email": "Invalid email format",
-    "phone": "Phone must be in E.164 format (e.g. +14155552671)"
+  "user": {
+    "id": "...",
+    "email": "...",
+    "employeeId": "...",
+    "isActive": true,
+    "role": { "id": "...", "slug": "super-admin", "name": "Super Admin", "isSystem": true },
+    "permissions": ["employees:read:all", "..."],
+    "fullName": "...",
+    "employee": { }
   }
 }
 ```
 
+Cookies: `accessToken` (15m), `refreshToken` (7d) — httpOnly; never in JSON.
+
+## Admin APIs
+
+| Method | Path | Permission |
+|--------|------|------------|
+| GET | `/api/admin/users` | `users:manage` |
+| PATCH | `/api/admin/users/:id` | `users:manage` — body `{ roleId?, isActive? }` |
+| GET | `/api/admin/roles` | `users:manage` \| `roles:manage` \| `employees:create` |
+| POST | `/api/admin/roles` | `roles:manage` |
+| PUT | `/api/admin/roles/:id` | `roles:manage` |
+| DELETE | `/api/admin/roles/:id` | `roles:manage` |
+| GET | `/api/admin/permissions` | `roles:manage` |
+
+Safety rules:
+- Cannot disable your own account
+- Cannot remove the last active user with `users:manage` / `roles:manage`
+- Cannot modify/delete system roles
+- Cannot delete a role still assigned to users
+- Disabling a user revokes all refresh tokens
+
 ## Soft delete
 
-- `DELETE /api/employees/:id` sets `deletedAt` (SUPER_ADMIN only)
+- `DELETE /api/employees/:id` requires `employees:delete`
 - Soft-deleted rows excluded from default list/search/tree/dashboard
-- Direct reports of a deleted manager get `reportingManagerId = null`
-- Linked `User.isActive = false` and refresh tokens revoked
-- `POST /api/employees/:id/restore` restores employee + user
+- Direct reports unassigned; linked `User.isActive = false`; refresh tokens revoked
+- `POST /api/employees/:id/restore` requires `employees:restore`
 
-## Dashboard (`GET /api/dashboard/stats`)
+## Dashboard / Organization / CSV
 
-Response `data`:
-- `totalEmployees`, `activeEmployees`, `inactiveEmployees`, `departmentCount` (numbers)
-- `charts.employeesPerDepartment`: `{ departmentId, departmentName, count }[]`
-- `charts.employeesByStatus`: `{ status: Status, count }[]`
-- `charts.hiresPerMonth`: `{ month: "YYYY-MM", count }[]` (rolling 12 months, UTC)
+Unchanged response shapes. CSV role column accepts `roleSlug` (`employee`, `hr-manager`, `super-admin`) or legacy enum names (`EMPLOYEE`, …). Filter employees with `roleId` query param.
 
-## Organization (`GET /api/organization/tree`)
+## Validation
 
-Response `data`: nested `OrgTreeNode[]` (roots only). Each node:
-`{ id, employeeCode, fullName, designation, departmentName, status, directReportCount, children }`
-Meta: `{ employeeCount, rootCount }`. Excludes soft-deleted employees.
+- Phone: `/^\+[1-9]\d{6,14}$/`
+- Salary max: `10_000_000`
+- Password (create): min 8 chars
 
-## Reportees (`GET /api/employees/:id/reportees`)
+## Seed credentials
 
-Response `data`: `EmployeePublic[]`; meta `{ managerId, managerName, count }`
-
-## CSV import (`POST /api/employees/import`)
-
-- Multipart field `file` (`.csv`, max 2 MB, max 500 rows)
-- Roles: `HR_MANAGER`, `SUPER_ADMIN`
-- Per-row Zod validation (`createEmployeeSchema`); batch does not abort on one bad row
-- Columns: `fullName`, `email`, `phone`, `department` *or* `departmentId`, `designation`, `salary`, `joiningDate`; optional `status`, `role`, `reportingManagerCode` / `reportingManagerId`, `password`, `profileImageUrl`
-- Default password if omitted: `ChangeMe@123`
-- Response `data`: `{ successCount, failedCount, failedRows: [{ row, errors }], created }`
-
+| Role | Email | Password |
 |------|-------|----------|
 | Super Admin | admin@ems.local | Admin@12345 |
 | HR Manager | hr1@ems.local | Hr@12345678 |
-| HR Manager | hr2@ems.local | Hr@12345678 |
-| Employee | (see seed) | Employee@123 |
+| Employee | alex.rivera@ems.local | Employee@123 |
+
+## Deployment note
+
+Apply migration `20260719150000_custom_rbac` on the backend **before** deploying the permission-aware frontend.

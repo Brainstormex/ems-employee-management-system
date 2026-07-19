@@ -7,7 +7,8 @@ import {
   createEmployeeSchema,
   CreateEmployeeInput,
 } from "../schemas/employee.schema";
-import { Role, Status } from "../types";
+import { Status } from "../types";
+import { SYSTEM_ROLE_SLUGS } from "../lib/permissions";
 import {
   assertDepartmentExists,
   assertEmailAvailable,
@@ -16,6 +17,12 @@ import {
   employeeInclude,
   serializeEmployee,
 } from "./employee.service";
+import {
+  assertAssignableRole,
+  getRoleBySlug,
+} from "./rbac.service";
+import { AuthUser } from "../types";
+import { PermissionKey } from "../lib/permissions";
 
 export type CsvImportFailedRow = {
   row: number;
@@ -29,7 +36,9 @@ export type CsvImportResult = {
   created: ReturnType<typeof serializeEmployee>[];
 };
 
-/** CSV may use department name / manager code aliases; coerce string salary. */
+type Actor = AuthUser & { permissions: PermissionKey[] };
+
+/** CSV may use department name / manager code / role slug aliases; coerce string salary. */
 function normalizeCsvRecord(raw: Record<string, string>): Record<string, unknown> {
   const get = (...keys: string[]) => {
     for (const key of keys) {
@@ -48,6 +57,17 @@ function normalizeCsvRecord(raw: Record<string, string>): Record<string, unknown
   const emptyToNull = (v: string | undefined) =>
     v === undefined || v === "" || v.toLowerCase() === "null" ? null : v;
 
+  const roleRaw = get("role", "roleSlug", "role_slug");
+  // Map legacy enum names to slugs
+  let roleSlug = roleRaw;
+  if (roleRaw) {
+    const upper = roleRaw.toUpperCase();
+    if (upper === "SUPER_ADMIN") roleSlug = SYSTEM_ROLE_SLUGS.SUPER_ADMIN;
+    else if (upper === "HR_MANAGER") roleSlug = SYSTEM_ROLE_SLUGS.HR_MANAGER;
+    else if (upper === "EMPLOYEE") roleSlug = SYSTEM_ROLE_SLUGS.EMPLOYEE;
+    else roleSlug = roleRaw.toLowerCase();
+  }
+
   return {
     fullName: get("fullName", "full_name", "name"),
     email: get("email"),
@@ -58,7 +78,8 @@ function normalizeCsvRecord(raw: Record<string, string>): Record<string, unknown
     salary,
     joiningDate: get("joiningDate", "joining_date"),
     status: get("status")?.toUpperCase(),
-    role: get("role")?.toUpperCase(),
+    roleId: get("roleId", "role_id"),
+    roleSlug,
     reportingManagerId: emptyToNull(
       get("reportingManagerId", "reporting_manager_id")
     ),
@@ -145,16 +166,36 @@ async function resolveManagerId(
   return { id: manager.id };
 }
 
+async function resolveRoleId(
+  roleId: string | undefined,
+  roleSlug: string | undefined
+): Promise<{ id?: string; error?: string }> {
+  if (roleId) {
+    const role = await prisma.accessRole.findUnique({ where: { id: roleId } });
+    if (!role) return { error: "Role not found" };
+    return { id: role.id };
+  }
+  if (roleSlug) {
+    const role = await getRoleBySlug(roleSlug);
+    if (!role) return { error: `Role not found: ${roleSlug}` };
+    return { id: role.id };
+  }
+  const fallback = await getRoleBySlug(SYSTEM_ROLE_SLUGS.EMPLOYEE);
+  return { id: fallback?.id };
+}
+
 export async function createEmployeeRecord(
   body: CreateEmployeeInput,
-  actorRole: Role
+  actor: Actor
 ) {
-  if (body.role === Role.SUPER_ADMIN && actorRole !== Role.SUPER_ADMIN) {
-    throw new AppError(403, "Only Super Admins can assign the SUPER_ADMIN role", {
-      role: "Only Super Admins can assign the SUPER_ADMIN role",
+  const resolved = await resolveRoleId(body.roleId, body.roleSlug);
+  if (!resolved.id) {
+    throw new AppError(400, resolved.error || "Role is required", {
+      roleId: resolved.error || "Role is required",
     });
   }
 
+  await assertAssignableRole(actor, resolved.id);
   await assertDepartmentExists(body.departmentId);
   await assertEmailAvailable(body.email);
 
@@ -164,7 +205,6 @@ export async function createEmployeeRecord(
 
   const password = body.password || "ChangeMe@123";
   const passwordHash = await hashPassword(password);
-  const role = body.role ?? Role.EMPLOYEE;
 
   const employee = await prisma.$transaction(async (tx) => {
     const employeeCode = await generateEmployeeCode(tx);
@@ -189,7 +229,7 @@ export async function createEmployeeRecord(
       data: {
         email: body.email,
         passwordHash,
-        role,
+        roleId: resolved.id!,
         employeeId: created.id,
         isActive: true,
       },
@@ -206,7 +246,7 @@ export async function createEmployeeRecord(
 
 export async function importEmployeesFromCsv(
   buffer: Buffer,
-  actorRole: Role
+  actor: Actor
 ): Promise<CsvImportResult> {
   let records: Record<string, string>[];
 
@@ -235,7 +275,6 @@ export async function importEmployeesFromCsv(
   const seenEmails = new Set<string>();
   const deptCache = new Map<string, string>();
 
-  // Row numbers are 1-indexed data rows (header is row 1 in the file → data starts at 2)
   for (let i = 0; i < records.length; i++) {
     const rowNumber = i + 2;
     const normalized = normalizeCsvRecord(records[i]);
@@ -258,6 +297,12 @@ export async function importEmployeesFromCsv(
     );
     if (manager.error) errors.reportingManagerId = manager.error;
 
+    const role = await resolveRoleId(
+      typeof normalized.roleId === "string" ? normalized.roleId : undefined,
+      typeof normalized.roleSlug === "string" ? normalized.roleSlug : undefined
+    );
+    if (role.error) errors.roleId = role.error;
+
     const candidate = {
       fullName: normalized.fullName,
       email: normalized.email,
@@ -267,7 +312,7 @@ export async function importEmployeesFromCsv(
       salary: normalized.salary,
       joiningDate: normalized.joiningDate,
       status: normalized.status || Status.ACTIVE,
-      role: normalized.role || Role.EMPLOYEE,
+      roleId: role.id,
       reportingManagerId: manager.id,
       profileImageUrl: normalized.profileImageUrl,
       password: normalized.password,
@@ -278,12 +323,14 @@ export async function importEmployeesFromCsv(
       Object.assign(errors, formatZodErrors(parsed.error as ZodError));
     }
 
-    if (
-      parsed.success &&
-      parsed.data.role === Role.SUPER_ADMIN &&
-      actorRole !== Role.SUPER_ADMIN
-    ) {
-      errors.role = "Only Super Admins can assign the SUPER_ADMIN role";
+    if (parsed.success && role.id) {
+      try {
+        await assertAssignableRole(actor, role.id);
+      } catch (err) {
+        if (err instanceof AppError) {
+          errors.roleId = err.errors?.roleId || err.message;
+        }
+      }
     }
 
     const emailCandidate = parsed.success
@@ -304,7 +351,7 @@ export async function importEmployeesFromCsv(
     seenEmails.add(data.email);
 
     try {
-      const employee = await createEmployeeRecord(data, actorRole);
+      const employee = await createEmployeeRecord(data, actor);
       created.push(employee);
     } catch (err) {
       if (err instanceof AppError && err.errors) {

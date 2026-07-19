@@ -8,7 +8,7 @@ import { ArrowLeft, Download, FileUp, Loader2 } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { importEmployeesCsv, EmployeeImportResult } from "@/lib/employees-api";
 import { ApiError } from "@/lib/api";
-import { Role } from "@/types";
+import { PERMISSIONS } from "@/types";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -83,9 +83,12 @@ function ImportForm() {
             Required columns:{" "}
             <code className="text-xs">fullName, email, phone, department, designation, salary, joiningDate</code>
             . Optional:{" "}
-            <code className="text-xs">status, role, reportingManagerCode, password, departmentId</code>
+            <code className="text-xs">status, roleSlug, reportingManagerCode, password, departmentId</code>
             . Phone must be E.164. Department is matched by name (e.g. Engineering).
-            Default password if omitted: <code className="text-xs">ChangeMe@123</code>.
+            Role slugs: <code className="text-xs">employee</code>,{" "}
+            <code className="text-xs">hr-manager</code>,{" "}
+            <code className="text-xs">super-admin</code>. Default password if omitted:{" "}
+            <code className="text-xs">ChangeMe@123</code>.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
@@ -206,7 +209,7 @@ function ImportForm() {
 
 export default function EmployeesImportPage() {
   return (
-    <ProtectedRoute roles={[Role.SUPER_ADMIN, Role.HR_MANAGER]}>
+    <ProtectedRoute permissions={[PERMISSIONS.EMPLOYEES_IMPORT]}>
       <ImportForm />
     </ProtectedRoute>
   );

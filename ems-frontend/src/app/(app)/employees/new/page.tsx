@@ -8,7 +8,7 @@ import { EmployeeForm } from "@/components/employees/employee-form";
 import { useAuth } from "@/components/providers/auth-provider";
 import { listDepartments } from "@/lib/departments-api";
 import { createEmployee, listEmployees } from "@/lib/employees-api";
-import { Role } from "@/types";
+import { PERMISSIONS } from "@/types";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Card,
@@ -61,7 +61,6 @@ function NewEmployeeContent() {
         <CardContent>
           <EmployeeForm
             mode="create"
-            currentRole={user.role}
             departments={departmentsQuery.data?.data ?? []}
             managers={managersQuery.data?.data ?? []}
             onCancel={() => router.push("/employees")}
@@ -79,7 +78,7 @@ function NewEmployeeContent() {
 
 export default function NewEmployeePage() {
   return (
-    <ProtectedRoute roles={[Role.SUPER_ADMIN, Role.HR_MANAGER]}>
+    <ProtectedRoute permissions={[PERMISSIONS.EMPLOYEES_CREATE]}>
       <NewEmployeeContent />
     </ProtectedRoute>
   );

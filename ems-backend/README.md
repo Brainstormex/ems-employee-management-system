@@ -95,16 +95,21 @@ Tokens are **never** returned in the JSON body.
 
 | Method | Path | Access |
 |--------|------|--------|
-| GET | `/api/employees` | Auth; EMPLOYEE → self |
-| POST | `/api/employees` | HR, Super Admin |
-| POST | `/api/employees/import` | HR, Super Admin (CSV) |
-| GET | `/api/employees/:id` | Auth; EMPLOYEE → self |
-| PUT | `/api/employees/:id` | Role-aware fields |
-| DELETE | `/api/employees/:id` | Super Admin (soft delete) |
-| POST | `/api/employees/:id/restore` | Super Admin |
-| GET | `/api/employees/:id/reportees` | Auth; EMPLOYEE → own team |
-| PATCH | `/api/employees/:id/manager` | HR, Super Admin |
+| GET | `/api/employees` | Auth; scoped by `employees:read:*` |
+| POST | `/api/employees` | `employees:create` |
+| POST | `/api/employees/import` | `employees:import` (CSV) |
+| GET | `/api/employees/:id` | Auth; scoped by permissions |
+| PUT | `/api/employees/:id` | `employees:update:*` |
+| DELETE | `/api/employees/:id` | `employees:delete` |
+| POST | `/api/employees/:id/restore` | `employees:restore` |
+| GET | `/api/employees/:id/reportees` | Auth; scoped |
+| PATCH | `/api/employees/:id/manager` | `employees:assign_manager` |
 | GET | `/api/departments` | Auth |
+| GET | `/api/admin/users` | `users:manage` |
+| PATCH | `/api/admin/users/:id` | `users:manage` |
+| GET | `/api/admin/roles` | `users:manage` / `roles:manage` / `employees:create` |
+| POST/PUT/DELETE | `/api/admin/roles` | `roles:manage` |
+| GET | `/api/admin/permissions` | `roles:manage` |
 
 List query: `search`, `department`, `role`, `status`, `sortBy`, `sortOrder`, `page`, `limit`, `includeDeleted`.
 

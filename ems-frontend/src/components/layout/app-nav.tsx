@@ -6,12 +6,16 @@ import {
   Building2,
   LayoutDashboard,
   Network,
+  Shield,
   Users,
+  UserCog,
   UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/components/providers/auth-provider";
+import { PERMISSIONS } from "@/types";
 
-const links = [
+const baseLinks = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/employees", label: "Employees", icon: Users },
   { href: "/organization", label: "Organization", icon: Network },
@@ -20,6 +24,17 @@ const links = [
 
 export function AppNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const { hasPermission } = useAuth();
+
+  const links = [
+    ...baseLinks,
+    ...(hasPermission(PERMISSIONS.USERS_MANAGE)
+      ? [{ href: "/admin/users", label: "Admin Users", icon: UserCog }]
+      : []),
+    ...(hasPermission(PERMISSIONS.ROLES_MANAGE)
+      ? [{ href: "/admin/roles", label: "Admin Roles", icon: Shield }]
+      : []),
+  ];
 
   return (
     <nav className="flex flex-col gap-1 p-3">

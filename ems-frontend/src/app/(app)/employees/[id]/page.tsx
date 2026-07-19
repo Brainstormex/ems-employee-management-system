@@ -17,9 +17,8 @@ import {
 } from "@/lib/employees-api";
 import { listDepartments } from "@/lib/departments-api";
 import {
-  Role,
+  PERMISSIONS,
   canDeleteEmployees,
-  canManageEmployees,
   roleLabel,
 } from "@/types";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -50,7 +49,7 @@ export default function EmployeeDetailPage() {
   const id = params.id;
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const [editing, setEditing] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -127,10 +126,12 @@ export default function EmployeeDetailPage() {
   }
 
   const emp = employeeQuery.data.data;
-  const canEditManagers = canManageEmployees(user.role);
+  const canEditAll = hasPermission(PERMISSIONS.EMPLOYEES_UPDATE_ALL);
   const isSelfOnly =
-    user.role === Role.EMPLOYEE && user.employeeId === emp.id;
-  const canDelete = canDeleteEmployees(user.role);
+    !canEditAll &&
+    hasPermission(PERMISSIONS.EMPLOYEES_UPDATE_SELF) &&
+    user.employeeId === emp.id;
+  const canDelete = canDeleteEmployees(user);
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -151,7 +152,7 @@ export default function EmployeeDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canEditManagers && !editing && (
+          {canEditAll && !editing && (
             <Button variant="outline" onClick={() => setEditing(true)}>
               <Pencil className="size-4" />
               Edit
@@ -180,8 +181,8 @@ export default function EmployeeDetailPage() {
             <AlertDialogTitle>Soft-delete this employee?</AlertDialogTitle>
             <AlertDialogDescription>
               They will be hidden from lists and their login disabled. Direct
-              reports will have their manager cleared. You can restore later as
-              Super Admin.
+              reports will have their manager cleared. You can restore later with
+              the restore permission.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -197,7 +198,7 @@ export default function EmployeeDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {editing && canEditManagers ? (
+      {editing && canEditAll ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Edit employee</CardTitle>
@@ -209,7 +210,6 @@ export default function EmployeeDetailPage() {
               <EmployeeForm
                 key={emp.id}
                 mode="edit"
-                currentRole={user.role}
                 initial={emp}
                 departments={departmentsQuery.data?.data ?? []}
                 managers={managersQuery.data?.data ?? []}

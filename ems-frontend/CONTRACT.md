@@ -1,40 +1,31 @@
 # EMS Frontend Contract (mirror of ems-backend/CONTRACT.md)
 
-Keep Zod rules and enums identical to the backend.
-
-## Enums
-- Role: SUPER_ADMIN | HR_MANAGER | EMPLOYEE
-- Status: ACTIVE | INACTIVE
+## Status
+- `ACTIVE` | `INACTIVE` (employee workforce status)
 
 ## Auth
-- Cookies: accessToken (15m), refreshToken (7d) — httpOnly, never in JSON
-- Frontend must call API with credentials: "include"
-- NEXT_PUBLIC_API_URL points at the backend origin
+- Cookies: accessToken (15m), refreshToken (7d) — httpOnly
+- `credentials: "include"`
+- Prefer same-origin `/api` via Next rewrite (`API_PROXY_TARGET`); leave `NEXT_PUBLIC_API_URL` empty
+- `/api/auth/me` returns `role: { id, slug, name, isSystem }` and `permissions: string[]`
+- On failed refresh after 401, client must logout to clear stale cookies
 
-## Validation (login)
-- email: valid email
-- password: required
+## Permissions
+Use `PERMISSIONS` from `src/types` / `hasPermission` from auth context.
+Key gates:
+- `employees:create` — Add / import
+- `employees:delete` — Soft-delete
+- `users:manage` — `/admin/users`
+- `roles:manage` — `/admin/roles`
 
-Phone / salary / employee schemas: `src/schemas/employee.schema.ts` (mirrors backend).
-Keep phone E.164, salary max 10_000_000, and self-update `.strict()` fields in sync.
+## Employee schemas
+- Create: optional `roleId` (uuid) — load options from `GET /api/admin/roles`
+- Update: no role field (use admin users API)
+- List filter: `roleId`
 
-## Dashboard (`GET /api/dashboard/stats`)
-Response `data`: `{ totalEmployees, activeEmployees, inactiveEmployees, departmentCount, charts }`
-- `charts.employeesPerDepartment`: `{ departmentId, departmentName, count }[]`
-- `charts.employeesByStatus`: `{ status, count }[]`
-- `charts.hiresPerMonth`: `{ month: "YYYY-MM", count }[]` (last 12 months)
+## Admin pages
+- `/admin/users` — assign role, enable/disable
+- `/admin/roles` — create/edit/delete custom roles; system roles read-only
 
-## Organization (`GET /api/organization/tree`)
-Response `data`: `OrgTreeNode[]` roots; each node `{ id, employeeCode, fullName, designation, departmentName, status, directReportCount, children }`
-Meta: `{ employeeCount, rootCount }`
-
-## Reportees (`GET /api/employees/:id/reportees`)
-Response `data`: `EmployeePublic[]`; meta `{ managerId, managerName, count }`
-
-## CSV import (`POST /api/employees/import`)
-- Multipart form field: `file` (`.csv`, max 2 MB / 500 rows)
-- Auth: HR_MANAGER | SUPER_ADMIN
-- Validates each row with create-employee rules; continues on row failures
-- Department: `department` (name) or `departmentId` (uuid)
-- Manager: `reportingManagerCode` or `reportingManagerId`
-- Response `data`: `{ successCount, failedCount, failedRows: [{ row, errors }], created: EmployeePublic[] }`
+## CSV import
+Sample uses `roleSlug` (`employee`). Legacy enum names still accepted by backend.

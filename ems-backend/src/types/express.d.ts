@@ -1,4 +1,5 @@
-import { Role } from "../types";
+import { RoleSummary } from "../types";
+import { PermissionKey } from "../lib/permissions";
 
 declare global {
   namespace Express {
@@ -6,8 +7,10 @@ declare global {
       user?: {
         id: string;
         email: string;
-        role: Role;
         employeeId: string | null;
+        role: RoleSummary;
+        permissions: PermissionKey[];
+        isActive: boolean;
       };
     }
   }

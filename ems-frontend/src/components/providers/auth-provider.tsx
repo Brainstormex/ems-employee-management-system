@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { fetchMe, login as loginRequest, logout as logoutRequest } from "@/lib/auth-api";
 import { ApiError } from "@/lib/api";
-import { AuthUser, Role } from "@/types";
+import { AuthUser } from "@/types";
 import { LoginInput } from "@/schemas/auth.schema";
 
 type AuthContextValue = {
@@ -19,7 +19,12 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   login: (input: LoginInput) => Promise<void>;
   logout: () => Promise<void>;
-  hasRole: (...roles: Role[]) => boolean;
+  /** Check role by slug (e.g. "super-admin", "hr-manager", "employee"). */
+  hasRole: (...slugs: string[]) => boolean;
+  /** Require all listed permission keys. */
+  hasPermission: (...keys: string[]) => boolean;
+  /** Require any of the listed permission keys. */
+  hasAnyPermission: (...keys: string[]) => boolean;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -36,6 +41,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return res.user;
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
+          // Clear stale cookies so middleware does not redirect-loop.
+          try {
+            await logoutRequest();
+          } catch {
+            // ignore logout failures when session is already invalid
+          }
           return null;
         }
         throw err;
@@ -73,9 +84,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [logoutMutation]);
 
   const hasRole = useCallback(
-    (...roles: Role[]) => {
+    (...slugs: string[]) => {
       if (!meQuery.data) return false;
-      return roles.includes(meQuery.data.role);
+      return slugs.includes(meQuery.data.role.slug);
+    },
+    [meQuery.data]
+  );
+
+  const hasPermission = useCallback(
+    (...keys: string[]) => {
+      if (!meQuery.data || keys.length === 0) return false;
+      return keys.every((key) => meQuery.data!.permissions.includes(key));
+    },
+    [meQuery.data]
+  );
+
+  const hasAnyPermission = useCallback(
+    (...keys: string[]) => {
+      if (!meQuery.data || keys.length === 0) return false;
+      return keys.some((key) => meQuery.data!.permissions.includes(key));
     },
     [meQuery.data]
   );
@@ -88,8 +115,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       login,
       logout,
       hasRole,
+      hasPermission,
+      hasAnyPermission,
     }),
-    [meQuery.data, meQuery.isLoading, login, logout, hasRole]
+    [
+      meQuery.data,
+      meQuery.isLoading,
+      login,
+      logout,
+      hasRole,
+      hasPermission,
+      hasAnyPermission,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

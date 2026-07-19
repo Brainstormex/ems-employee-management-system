@@ -14,26 +14,86 @@ import {
   setAuthCookies,
 } from "../lib/cookies";
 import { AppError } from "../middleware/error";
-import { Role } from "../types";
 import { LoginInput } from "../schemas/employee.schema";
+import {
+  extractPermissionKeys,
+  loadUserAuthContext,
+  serializeRoleSummary,
+} from "../services/rbac.service";
 
 const BCRYPT_ROUNDS = 10;
+
+const authUserInclude = {
+  role: {
+    include: {
+      permissions: {
+        include: {
+          permission: { select: { key: true, name: true, groupName: true } },
+        },
+      },
+    },
+  },
+  employee: {
+    select: {
+      id: true,
+      fullName: true,
+      employeeCode: true,
+      designation: true,
+      deletedAt: true,
+      department: { select: { id: true, name: true } },
+    },
+  },
+} as const;
+
+function toPublicUser(user: {
+  id: string;
+  email: string;
+  employeeId: string | null;
+  isActive: boolean;
+  lastLoginAt?: Date | null;
+  role: {
+    id: string;
+    slug: string;
+    name: string;
+    isSystem: boolean;
+    permissions: { permission: { key: string; name: string; groupName: string } }[];
+  };
+  employee?: {
+    id: string;
+    fullName: string;
+    employeeCode: string;
+    designation?: string;
+    department?: { id: string; name: string } | null;
+  } | null;
+}) {
+  return {
+    id: user.id,
+    email: user.email,
+    employeeId: user.employeeId,
+    isActive: user.isActive,
+    lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+    role: serializeRoleSummary(user.role),
+    permissions: extractPermissionKeys(user.role),
+    fullName: user.employee?.fullName ?? null,
+    employeeCode: user.employee?.employeeCode ?? null,
+    employee: user.employee
+      ? {
+          id: user.employee.id,
+          fullName: user.employee.fullName,
+          employeeCode: user.employee.employeeCode,
+          designation: user.employee.designation ?? "",
+          department: user.employee.department ?? null,
+        }
+      : null,
+  };
+}
 
 export async function login(req: Request, res: Response): Promise<void> {
   const { email, password } = req.body as LoginInput;
 
   const user = await prisma.user.findUnique({
     where: { email },
-    include: {
-      employee: {
-        select: {
-          id: true,
-          fullName: true,
-          employeeCode: true,
-          deletedAt: true,
-        },
-      },
-    },
+    include: authUserInclude,
   });
 
   if (!user || !user.isActive) {
@@ -52,7 +112,8 @@ export async function login(req: Request, res: Response): Promise<void> {
   const accessToken = signAccessToken({
     sub: user.id,
     email: user.email,
-    role: user.role as Role,
+    roleId: user.roleId,
+    roleSlug: user.role.slug,
     employeeId: user.employeeId,
   });
 
@@ -74,16 +135,7 @@ export async function login(req: Request, res: Response): Promise<void> {
 
   setAuthCookies(res, accessToken, refreshToken);
 
-  res.json({
-    user: {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      employeeId: user.employeeId,
-      fullName: user.employee?.fullName ?? null,
-      employeeCode: user.employee?.employeeCode ?? null,
-    },
-  });
+  res.json({ user: toPublicUser(user) });
 }
 
 export async function logout(req: Request, res: Response): Promise<void> {
@@ -130,39 +182,29 @@ export async function refresh(req: Request, res: Response): Promise<void> {
     throw new AppError(401, "Refresh token revoked or expired");
   }
 
-  // Rotate: revoke old, issue new pair
   await prisma.refreshToken.update({
     where: { id: stored.id },
     data: { revokedAt: new Date() },
   });
 
-  const user = await prisma.user.findUnique({
-    where: { id: payload.sub },
-    select: {
-      id: true,
-      email: true,
-      role: true,
-      employeeId: true,
-      isActive: true,
-    },
-  });
-
-  if (!user || !user.isActive) {
+  const ctx = await loadUserAuthContext(payload.sub);
+  if (!ctx || !ctx.isActive) {
     clearAuthCookies(res);
     throw new AppError(401, "User account is inactive or not found");
   }
 
   const accessToken = signAccessToken({
-    sub: user.id,
-    email: user.email,
-    role: user.role as Role,
-    employeeId: user.employeeId,
+    sub: ctx.id,
+    email: ctx.email,
+    roleId: ctx.role.id,
+    roleSlug: ctx.role.slug,
+    employeeId: ctx.employeeId,
   });
 
-  const { token: newRefreshToken } = signRefreshToken(user.id);
+  const { token: newRefreshToken } = signRefreshToken(ctx.id);
   await prisma.refreshToken.create({
     data: {
-      userId: user.id,
+      userId: ctx.id,
       tokenHash: hashToken(newRefreshToken),
       expiresAt: getRefreshExpiryDate(),
     },
@@ -179,29 +221,15 @@ export async function me(req: Request, res: Response): Promise<void> {
 
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
-    select: {
-      id: true,
-      email: true,
-      role: true,
-      employeeId: true,
-      lastLoginAt: true,
-      employee: {
-        select: {
-          id: true,
-          fullName: true,
-          employeeCode: true,
-          designation: true,
-          department: { select: { id: true, name: true } },
-        },
-      },
-    },
+    include: authUserInclude,
   });
 
-  if (!user) {
-    throw new AppError(404, "User not found");
+  if (!user || !user.isActive) {
+    clearAuthCookies(res);
+    throw new AppError(401, "User account is inactive or not found");
   }
 
-  res.json({ user });
+  res.json({ user: toPublicUser(user) });
 }
 
 /** Exported for tests / future user creation */
